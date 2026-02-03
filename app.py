@@ -1,33 +1,39 @@
 import streamlit as st
 import pandas as pd
 import streamlit.components.v1 as components
-import requests  # 新增：用來幫我們抓檔案的工具
+import urllib.parse
 
 # === 1. 設定區 ===
 CSV_URL = "https://docs.google.com/spreadsheets/d/e/2PACX-1vQWueqZqoUXP7YM_UDDAedhAjYQI80RoNapxH8YyKbyLkq8L_CprL2eeQ7DEPBqdxqJCRVCiaRp9l6S/pub?output=csv"
 PASSWORD = "888"
 SITE_URL = "https://swd-voice.streamlit.app"
 
-# === 2. CSS 設定 (隱藏下載鈕) ===
+# === 2. CSS 設定 (回到您最習慣的 V12 設定) ===
 st.set_page_config(page_title="全家配音試聽", layout="centered")
 
 st.markdown("""
     <style>
-        /* === 針對 Streamlit 原廠播放器隱藏下載 === */
-        /* 這會把播放器右邊包含下載鈕的區域直接切掉 */
-        audio::-webkit-media-controls-enclosure {
-            overflow: hidden !important;
+        /* === RWD 分流設定 === */
+        
+        /* 電腦版 (螢幕 > 900px)：隱藏手機按鈕 */
+        @media (min-width: 901px) {
+            .mobile-only { display: none !important; }
         }
-        audio::-webkit-media-controls-panel {
-            width: calc(100% + 35px) !important; 
+        
+        /* 手機/平板版 (螢幕 <= 900px)：隱藏電腦播放器，顯示手機按鈕 */
+        /* 注意：在外部分享模式下，我們會強制顯示播放器 */
+        @media (max-width: 900px) {
+            .pc-only { display: none !important; }
+            .mobile-only { display: block !important; }
         }
+
+        /* 隱藏原生播放器的下載選單 */
+        audio::-webkit-media-controls-enclosure { overflow: hidden; }
+        audio::-webkit-media-controls-panel { width: calc(100% + 30px); }
         
         /* 調整按鈕 */
         .stButton button { border-radius: 8px; font-weight: bold; }
         div[data-testid="stCheckbox"] label { font-size: 16px !important; font-weight: bold; }
-        
-        /* 讓手機版介面更清爽 */
-        .stAudio { margin-top: 10px; margin-bottom: 10px; }
     </style>
 """, unsafe_allow_html=True)
 
@@ -38,10 +44,12 @@ def render_copy_ui(text_to_copy):
         <label style="font-size:14px; color:#333; font-weight:bold; margin-bottom:5px; display:block;">👇 連結網址</label>
         <input type="text" value="{text_to_copy}" id="copyInput" readonly 
             style="width: 100%; padding: 10px; border: 1px solid #ddd; border-radius: 5px; font-size: 14px; color: #555; background-color: #fff; margin-bottom: 10px;">
+        
         <button onclick="copyToClipboard()" 
             style="width: 100%; padding: 12px; background-color: #28a745; color: white; border: none; border-radius: 5px; font-size: 16px; font-weight: bold; cursor: pointer; transition: 0.3s;">
             📋 點此一鍵複製
         </button>
+        
         <script>
             function copyToClipboard() {{
                 var copyText = document.getElementById("copyInput");
@@ -63,7 +71,7 @@ def show_share_dialog(title, link):
     st.caption(f"{title}")
     render_copy_ui(link)
 
-# === 4. 資料讀取 ===
+# === 4. 資料讀取 (讀取 Link_Player) ===
 @st.cache_data(ttl=600)
 def load_data():
     try:
@@ -78,7 +86,7 @@ def load_data():
         col_id = get_col(["id", "編號"])
         col_name = get_col(["filename", "name", "檔名"])
         col_link = get_col(["link_source", "link", "連結"])
-        col_player = get_col(["link_player", "player", "播放連結"])
+        col_player = get_col(["link_player", "player", "播放連結"]) 
         col_voice = get_col(["voice", "category", "聲線"])
         col_main = get_col(["style", "主風格"])
         col_sec = get_col(["sec style", "副風格"])
@@ -120,18 +128,38 @@ def get_player_link(link):
     clean = get_clean_link(link)
     return clean + ('&download=1' if '?' in clean else '?download=1')
 
-# === 6. 核心：伺服器代抓音檔 (Proxy) ===
-# 這段程式碼會讓 Streamlit 去下載檔案，然後直接餵給播放器
-# 這樣手機就會以為這是「內部檔案」，絕對能播！
-@st.cache_data(ttl=3600, show_spinner=False)
-def fetch_audio_bytes(url):
-    try:
-        response = requests.get(url, timeout=10)
-        if response.status_code == 200:
-            return response.content
-        return None
-    except:
-        return None
+# === 6. 播放器與按鈕元件 (V12 架構 + ID 修復) ===
+
+def render_safe_player(url, unique_id):
+    """
+    HTML5 播放器 (嚴格禁止下載)
+    加上 unique_id 解決 PC 播放同一首的問題
+    """
+    html = f"""
+        <audio id="audio_{unique_id}" controls controlsList="nodownload" oncontextmenu="return false;" style="width: 100%; margin-bottom: 5px;">
+            <source src="{url}" type="audio/mp3">
+            您的瀏覽器不支援播放
+        </audio>
+    """
+    st.markdown(html, unsafe_allow_html=True)
+
+def render_mobile_btn(url):
+    """手機專用的紅色大按鈕 (僅內部列表使用)"""
+    st.markdown(f"""
+        <div class="mobile-only" style="margin-bottom: 10px;">
+            <a href="{url}" target="_blank" style="
+                display: block; width: 100%; padding: 15px; 
+                background-color: #FF4B4B; color: white; 
+                text-align: center; text-decoration: none; 
+                font-size: 18px; font-weight: bold; border-radius: 10px;
+                box-shadow: 0 4px 6px rgba(0,0,0,0.1);">
+                ▶️ 手機點此播放音檔
+            </a>
+            <div style="text-align:center; color:#666; font-size:12px; margin-top:5px;">
+                (開啟新視窗播放)
+            </div>
+        </div>
+    """, unsafe_allow_html=True)
 
 # === 7. 主程式 ===
 def main():
@@ -142,27 +170,23 @@ def main():
     df = load_data()
     if df.empty: return
 
-    # --- [模式 A] 外部分享 (客戶看) ---
+    # -------------------------------------------------------
+    # 【模式 A】客戶單一播放模式 (外部分享)
+    # -------------------------------------------------------
     target_row = pd.DataFrame()
     if target_id: target_row = df[df['ID'] == target_id]
     elif target_name: target_row = df[df['Name'] == target_name]
         
     if not target_row.empty:
         item = target_row.iloc[0]
-        # 取得播放連結
-        play_url = get_player_link(item['Link_Player'])
+        # 外部使用 Link_Player
+        play_source = get_player_link(item['Link_Player'])
         
         with st.container(border=True):
             st.subheader(f"🎵 {item['Name']}")
             
-            # 【關鍵改變】不直接給連結，而是先下載成 bytes 再播放
-            # 這會解決手機跨域阻擋的問題
-            audio_bytes = fetch_audio_bytes(play_url)
-            
-            if audio_bytes:
-                st.audio(audio_bytes, format="audio/mp3")
-            else:
-                st.error("音檔讀取中，請稍候重試...")
+            # 外部模式：全顯示播放器 (無下載)
+            render_safe_player(play_source, item['ID'])
             
             st.divider()
             st.warning("⚠️ 僅供內部試聽，禁止下載")
@@ -174,7 +198,9 @@ def main():
     elif (target_id or target_name) and target_row.empty:
         st.error("找不到檔案")
 
-    # --- [模式 B] 內部列表 ---
+    # -------------------------------------------------------
+    # 【模式 B】管理員模式 (內部使用)
+    # -------------------------------------------------------
     else:
         st.title("全家配音資料庫 📂")
 
@@ -193,7 +219,6 @@ def main():
 
         with st.container(border=True):
             search_name = st.text_input("👤 配音員名稱 / 關鍵字")
-            
             col_t1, col_t2, col_t3 = st.columns(3)
             with col_t1: filter_male = st.checkbox("🙋‍♂️ 男聲")
             with col_t2: filter_female = st.checkbox("🙋‍♀️ 女聲")
@@ -223,36 +248,16 @@ def main():
         for _, row in results.head(20).iterrows():
             with st.expander(f"📄 {row['Name']}"):
                 
-                player_src = get_player_link(row['Link_Player']) # PC 播放器用
-                source_src = get_clean_link(row['Link_Source'])  # 手機連結用 (OneDrive)
+                player_src = get_player_link(row['Link_Player']) # PC 用
+                source_src = get_clean_link(row['Link_Source'])  # 手機紅按鈕用
                 
-                # 1. 內部列表我們維持「PC 播放器」+「手機紅按鈕」的邏輯
-                # (因為這裡您自己人使用，紅按鈕最方便)
-                
-                # PC 顯示
+                # 1. PC 顯示播放器 (修好ID了，不會重複)
                 st.markdown('<div class="pc-only">', unsafe_allow_html=True)
-                # PC 這裡我們也用代抓模式，確保統一
-                audio_bytes = fetch_audio_bytes(player_src)
-                if audio_bytes:
-                    st.audio(audio_bytes, format="audio/mp3")
+                render_safe_player(player_src, row['ID'])
                 st.markdown('</div>', unsafe_allow_html=True)
                 
-                # 手機顯示紅按鈕 (CSS 控制)
-                st.markdown(f"""
-                    <div class="mobile-only" style="margin-bottom: 10px;">
-                        <a href="{source_src}" target="_blank" style="
-                            display: block; width: 100%; padding: 15px; 
-                            background-color: #FF4B4B; color: white; 
-                            text-align: center; text-decoration: none; 
-                            font-size: 18px; font-weight: bold; border-radius: 10px;
-                            box-shadow: 0 4px 6px rgba(0,0,0,0.1);">
-                            ▶️ 手機點此播放音檔
-                        </a>
-                        <div style="text-align:center; color:#666; font-size:12px; margin-top:5px;">
-                            (開啟新視窗播放)
-                        </div>
-                    </div>
-                """, unsafe_allow_html=True)
+                # 2. 手機顯示紅按鈕 (V12 原本的樣子)
+                render_mobile_btn(source_src)
                 
                 b1, b2 = st.columns(2)
                 with b1:
