@@ -10,7 +10,7 @@ PASSWORD = "888"
 # 【關鍵】請填入您部署後的 Streamlit App 網址
 # 網址結尾不要有斜線 /
 # 例如： https://familymart-voice.streamlit.app
-SITE_URL = "https://familymart-voice.streamlit.app" 
+SITE_URL = "https://swd-voice.streamlit.app/" 
 
 # === 2. 頁面設定與 CSS 黑魔法 (隱藏下載按鈕) ===
 st.set_page_config(page_title="全家配音試聽", layout="centered")
