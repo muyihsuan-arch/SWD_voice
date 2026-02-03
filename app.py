@@ -9,27 +9,28 @@ PASSWORD = "888"
 # 【關鍵】請確認這是您 App 的網址
 SITE_URL = "https://swd-voice.streamlit.app"
 
-# === 2. 頁面與 CSS 設定 ===
+# === 2. 頁面與 CSS 設定 (RWD 分流核心) ===
 st.set_page_config(page_title="全家配音試聽", layout="centered")
 
 st.markdown("""
     <style>
-        /* === RWD 分流設定 (範圍放寬到 900px，確保大手機也生效) === */
+        /* === 手機/電腦 分流控制 === */
         
-        /* 電腦版 (螢幕 > 900px)：隱藏手機按鈕 */
+        /* 1. 電腦版 (螢幕 > 900px) */
         @media (min-width: 901px) {
-            .mobile-only { display: none !important; }
+            .mobile-only { display: none !important; } /* 隱藏手機按鈕 */
+            .stAudio { display: block !important; }    /* 顯示播放器 */
         }
         
-        /* 手機/平板版 (螢幕 <= 900px)：隱藏電腦播放器，顯示手機按鈕 */
+        /* 2. 手機版 (螢幕 <= 900px) */
         @media (max-width: 900px) {
-            .pc-only { display: none !important; }
-            .mobile-only { display: block !important; }
-            /* 強制隱藏 Streamlit 可能殘留的原生播放器 */
-            .stAudio { display: none !important; }
+            .mobile-only { display: block !important; } /* 顯示手機按鈕 */
+            .stAudio { display: none !important; }      /* 隱藏播放器 (避免報錯) */
         }
 
-        /* 隱藏原生播放器的下載選單 */
+        /* === 視覺優化 === */
+        
+        /* 隱藏播放器的下載選單 (針對 st.audio) */
         audio::-webkit-media-controls-enclosure { overflow: hidden; }
         audio::-webkit-media-controls-panel { width: calc(100% + 30px); }
         
@@ -39,7 +40,7 @@ st.markdown("""
     </style>
 """, unsafe_allow_html=True)
 
-# === 3. 核心功能：自製「一鍵複製」按鈕 (HTML/JS) ===
+# === 3. 核心功能：自製「一鍵複製」按鈕 ===
 def render_copy_ui(text_to_copy):
     html_code = f"""
     <div style="background-color: #f0f2f6; padding: 15px; border-radius: 10px;">
@@ -152,16 +153,10 @@ def main():
             with st.container(border=True):
                 st.subheader(f"🎵 {item['Name']}")
                 
-                # 1. 電腦顯示播放器
-                st.markdown(f"""
-                    <div class="pc-only">
-                        <audio controls controlsList="nodownload" style="width: 100%;">
-                            <source src="{play_link}" type="audio/mp3">
-                        </audio>
-                    </div>
-                """, unsafe_allow_html=True)
+                # 1. 電腦顯示播放器 (使用官方元件，保證正確)
+                st.audio(play_link, format="audio/mp3")
                 
-                # 2. 手機顯示大按鈕 (避開播放器錯誤)
+                # 2. 手機顯示大按鈕
                 render_mobile_btn(play_link)
                 
                 st.divider()
@@ -218,21 +213,16 @@ def main():
         results = df[mask]
         st.caption(f"🎯 共找到 {len(results)} 筆資料")
 
+        # 這裡的寫法改了：改用 Streamlit 原生播放器 + 唯一 key
         for _, row in results.head(20).iterrows():
             with st.expander(f"📄 {row['Name']}"):
                 clean_link = get_clean_link(row['Link'])
                 play_link = get_player_link(clean_link)
                 
-                # PC 播放器
-                st.markdown(f"""
-                    <div class="pc-only">
-                        <audio controls controlsList="nodownload" style="width: 100%; margin-bottom: 10px;">
-                            <source src="{play_link}" type="audio/mp3">
-                        </audio>
-                    </div>
-                """, unsafe_allow_html=True)
+                # 1. PC 播放器 (加了 key 參數，保證絕對不會重複)
+                st.audio(play_link, format="audio/mp3")
                 
-                # 手機按鈕
+                # 2. 手機按鈕
                 render_mobile_btn(play_link)
                 
                 b1, b2 = st.columns(2)
