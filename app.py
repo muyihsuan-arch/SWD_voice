@@ -9,7 +9,7 @@ PASSWORD = "888"
 # 【關鍵】請確認這是您 App 的網址
 SITE_URL = "https://swd-voice.streamlit.app"
 
-# === 2. 頁面與 CSS 設定 ===
+# === 2. 頁面與 CSS 設定 (保持您滿意的狀態) ===
 st.set_page_config(page_title="全家配音試聽", layout="centered")
 
 st.markdown("""
@@ -38,7 +38,7 @@ st.markdown("""
     </style>
 """, unsafe_allow_html=True)
 
-# === 3. 核心功能：自製「一鍵複製」按鈕 (HTML/JS) ===
+# === 3. 核心功能：自製「一鍵複製」按鈕 ===
 def render_copy_ui(text_to_copy):
     html_code = f"""
     <div style="background-color: #f0f2f6; padding: 15px; border-radius: 10px;">
@@ -73,7 +73,7 @@ def show_share_dialog(title, link):
     st.caption(f"{title}")
     render_copy_ui(link)
 
-# === 5. 資料讀取 ===
+# === 5. 資料讀取 (新增 ID 欄位讀取) ===
 @st.cache_data(ttl=600)
 def load_data():
     try:
@@ -85,6 +85,8 @@ def load_data():
                 if any(x in c.lower() for x in candidates): return c
             return None
 
+        # 自動對應欄位
+        col_id = get_col(["id", "編號"])  # 新增：讀取 ID 欄位
         col_name = get_col(["filename", "name", "檔名"])
         col_link = get_col(["link_source", "link", "連結"])
         col_voice = get_col(["voice", "category", "聲線"])
@@ -93,11 +95,24 @@ def load_data():
 
         if not col_link: return pd.DataFrame()
 
-        rename_map = { col_name: 'Name', col_link: 'Link', col_voice: 'Voice', col_main: 'Main_Style' }
+        rename_map = { 
+            col_name: 'Name', 
+            col_link: 'Link', 
+            col_voice: 'Voice', 
+            col_main: 'Main_Style' 
+        }
+        if col_id: rename_map[col_id] = 'ID'
         if col_sec: rename_map[col_sec] = 'Sec_Style'
         
         df = df.rename(columns=rename_map)
         
+        # 確保 ID 欄位存在且為字串格式 (避免數字被當成小數點)
+        if 'ID' not in df.columns: 
+            # 如果真的沒讀到 ID，暫時用檔名代替，避免報錯
+            df['ID'] = df['Name']
+        else:
+            df['ID'] = df['ID'].astype(str)
+
         if 'Sec_Style' not in df.columns: df['Sec_Style'] = ""
         df['Main_Style'] = df['Main_Style'].fillna("未分類")
         df['Sec_Style'] = df['Sec_Style'].fillna("")
@@ -115,14 +130,12 @@ def get_player_link(link):
     clean = get_clean_link(link)
     return clean + ('&download=1' if '?' in clean else '?download=1')
 
-# === 7. 播放器與按鈕元件 (修復 ID 問題) ===
+# === 7. 播放器與按鈕元件 (全面改用 ID 控制) ===
 
 def render_safe_player(url, unique_id):
     """
-    安全的嵌入式播放器
-    unique_id: 使用檔名當作 ID，解決 PC 播放同一首的問題
+    unique_id: 現在會傳入您的 ID (F04_2_01)，這能確保播放器 100% 準確
     """
-    # 這裡的 HTML id 用了 unique_id，保證每個播放器都是獨立的
     html = f"""
         <audio id="audio_{unique_id}" controls controlsList="nodownload" oncontextmenu="return false;" style="width: 100%; margin-bottom: 5px;">
             <source src="{url}" type="audio/mp3">
@@ -151,36 +164,45 @@ def render_mobile_btn(url):
 # === 8. 主程式 ===
 def main():
     params = st.query_params
+    
+    # 【更新】優先讀取 ID 參數，如果沒有才讀 n (保留相容性)
+    target_id = params.get("id", None)
     target_name = params.get("n", None)
+    
     df = load_data()
     if df.empty: return
 
     # -------------------------------------------------------
-    # 【模式 A】客戶單一播放模式 (嚴格禁止下載)
+    # 【模式 A】客戶單一播放模式 (外部分享)
     # -------------------------------------------------------
-    if target_name:
-        row = df[df['Name'] == target_name]
-        if not row.empty:
-            item = row.iloc[0]
-            clean_link = get_clean_link(item['Link'])
-            play_link = get_player_link(clean_link)
+    # 邏輯：有 ID 用 ID 找，沒 ID 用檔名找
+    target_row = pd.DataFrame()
+    
+    if target_id:
+        target_row = df[df['ID'] == target_id]
+    elif target_name:
+        target_row = df[df['Name'] == target_name]
+        
+    if not target_row.empty:
+        item = target_row.iloc[0]
+        clean_link = get_clean_link(item['Link'])
+        play_link = get_player_link(clean_link)
+        
+        with st.container(border=True):
+            st.subheader(f"🎵 {item['Name']}")
             
-            with st.container(border=True):
-                st.subheader(f"🎵 {item['Name']}")
-                
-                # 【關鍵修正】外部分享模式，手機也要用嵌入式 Player (不能用紅按鈕，因為紅按鈕=可下載)
-                # 因為修好了 ID 問題，現在這個 Player 在手機上應該也能跑了
-                # 使用 item['Name'] 當作 ID，絕對唯一
-                render_safe_player(play_link, item['Name'])
-                
-                st.divider()
-                st.warning("⚠️ 僅供內部試聽，禁止下載")
-                
-            if st.button("🏠 回搜尋首頁"):
-                st.query_params.clear()
-                st.rerun()
-        else:
-            st.error("找不到檔案")
+            # 【關鍵】使用 ID 來建立播放器，解決手機外部連結無法播放的問題
+            render_safe_player(play_link, item['ID'])
+            
+            st.divider()
+            st.warning("⚠️ 僅供內部試聽，禁止下載")
+            
+        if st.button("🏠 回搜尋首頁"):
+            st.query_params.clear()
+            st.rerun()
+            
+    elif (target_id or target_name) and target_row.empty:
+        st.error("找不到檔案，請確認連結是否正確。")
 
     # -------------------------------------------------------
     # 【模式 B】管理員模式 (內部使用)
@@ -191,11 +213,9 @@ def main():
         if "logged_in" not in st.session_state: st.session_state.logged_in = False
         
         if not st.session_state.logged_in:
-            # 【關鍵修正】使用 st.form 讓 Enter 鍵生效
             with st.form("login_form"):
                 st.write("請輸入密碼")
                 pw = st.text_input("Password", type="password", label_visibility="collapsed")
-                # 這個按鈕會在按下 Enter 時自動觸發
                 if st.form_submit_button("登入", type="primary", use_container_width=True):
                     if pw == PASSWORD:
                         st.session_state.logged_in = True
@@ -238,22 +258,22 @@ def main():
                 clean_link = get_clean_link(row['Link'])
                 play_link = get_player_link(clean_link)
                 
-                # 1. PC 顯示嵌入式播放器 (帶有 Unique ID)
+                # 1. PC 顯示嵌入式播放器 (傳入 ID 確保唯一)
                 st.markdown(f'<div class="pc-only">', unsafe_allow_html=True)
-                render_safe_player(play_link, row['Name']) # 傳入檔名當 ID
+                render_safe_player(play_link, row['ID']) 
                 st.markdown('</div>', unsafe_allow_html=True)
                 
-                # 2. 手機顯示大按鈕 (僅內部列表方便用，反正內部人可以下載沒關係)
+                # 2. 手機顯示大按鈕
                 render_mobile_btn(play_link)
                 
                 b1, b2 = st.columns(2)
                 with b1:
-                    if st.button("📋 內部分享", key=f"in_{row['Name']}"):
+                    if st.button("📋 內部分享", key=f"in_{row['ID']}"):
                         show_share_dialog("內部分享連結 (OneDrive)", clean_link)
                 with b2:
-                    if st.button("🌏 外部分享", key=f"out_{row['Name']}"):
-                        safe_name = urllib.parse.quote(row['Name'])
-                        share_link = f"{SITE_URL}?n={safe_name}"
+                    if st.button("🌏 外部分享", key=f"out_{row['ID']}"):
+                        # 【更新】這裡改用 ID 來產生分享連結，網址更短更乾淨
+                        share_link = f"{SITE_URL}?id={row['ID']}"
                         show_share_dialog("外部分享連結 (客戶試聽用)", share_link)
 
 if __name__ == "__main__":
