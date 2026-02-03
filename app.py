@@ -6,30 +6,31 @@ import urllib.parse
 # === 1. 設定區 ===
 CSV_URL = "https://docs.google.com/spreadsheets/d/e/2PACX-1vQWueqZqoUXP7YM_UDDAedhAjYQI80RoNapxH8YyKbyLkq8L_CprL2eeQ7DEPBqdxqJCRVCiaRp9l6S/pub?output=csv"
 PASSWORD = "888"
+# 【關鍵】請確認這是您 App 的網址
 SITE_URL = "https://swd-voice.streamlit.app"
 
-# === 2. 頁面與 CSS 設定 (CSS 暴力隱藏下載鈕) ===
+# === 2. 頁面與 CSS 設定 (嚴格還原 V12 的 CSS) ===
 st.set_page_config(page_title="全家配音試聽", layout="centered")
 
 st.markdown("""
     <style>
         /* === RWD 分流設定 === */
+        
+        /* 電腦版 (螢幕 > 900px)：隱藏手機按鈕 */
         @media (min-width: 901px) {
             .mobile-only { display: none !important; }
         }
+        
+        /* 手機/平板版 (螢幕 <= 900px)：隱藏電腦播放器，顯示手機按鈕 */
+        /* 注意：在外部分享模式下，我們會強制顯示播放器 */
         @media (max-width: 900px) {
             .pc-only { display: none !important; }
             .mobile-only { display: block !important; }
         }
 
-        /* === 核心關鍵：針對 Streamlit 原廠播放器隱藏下載 === */
-        /* 這會把播放器右邊 30px (包含下載鈕的地方) 直接切掉 */
-        audio::-webkit-media-controls-enclosure {
-            overflow: hidden !important;
-        }
-        audio::-webkit-media-controls-panel {
-            width: calc(100% + 35px) !important; 
-        }
+        /* 隱藏原生播放器的下載選單 */
+        audio::-webkit-media-controls-enclosure { overflow: hidden; }
+        audio::-webkit-media-controls-panel { width: calc(100% + 30px); }
         
         /* 調整按鈕 */
         .stButton button { border-radius: 8px; font-weight: bold; }
@@ -37,17 +38,19 @@ st.markdown("""
     </style>
 """, unsafe_allow_html=True)
 
-# === 3. 複製按鈕元件 ===
+# === 3. 核心功能：自製「一鍵複製」按鈕 ===
 def render_copy_ui(text_to_copy):
     html_code = f"""
     <div style="background-color: #f0f2f6; padding: 15px; border-radius: 10px;">
         <label style="font-size:14px; color:#333; font-weight:bold; margin-bottom:5px; display:block;">👇 連結網址</label>
         <input type="text" value="{text_to_copy}" id="copyInput" readonly 
             style="width: 100%; padding: 10px; border: 1px solid #ddd; border-radius: 5px; font-size: 14px; color: #555; background-color: #fff; margin-bottom: 10px;">
+        
         <button onclick="copyToClipboard()" 
             style="width: 100%; padding: 12px; background-color: #28a745; color: white; border: none; border-radius: 5px; font-size: 16px; font-weight: bold; cursor: pointer; transition: 0.3s;">
             📋 點此一鍵複製
         </button>
+        
         <script>
             function copyToClipboard() {{
                 var copyText = document.getElementById("copyInput");
@@ -64,12 +67,13 @@ def render_copy_ui(text_to_copy):
     """
     components.html(html_code, height=180)
 
+# === 4. 彈出視窗 ===
 @st.dialog("🔗 分享連結")
 def show_share_dialog(title, link):
     st.caption(f"{title}")
     render_copy_ui(link)
 
-# === 4. 資料讀取 ===
+# === 5. 資料讀取 (加入 ID 和 Link_Player) ===
 @st.cache_data(ttl=600)
 def load_data():
     try:
@@ -81,10 +85,12 @@ def load_data():
                 if any(x in c.lower() for x in candidates): return c
             return None
 
+        # 自動對應欄位
         col_id = get_col(["id", "編號"])
         col_name = get_col(["filename", "name", "檔名"])
         col_link = get_col(["link_source", "link", "連結"])
-        col_player = get_col(["link_player", "player", "播放連結"]) # 讀取 Link_Player
+        # 新增讀取 Player 連結
+        col_player = get_col(["link_player", "player", "播放連結"])
         col_voice = get_col(["voice", "category", "聲線"])
         col_main = get_col(["style", "主風格"])
         col_sec = get_col(["sec style", "副風格"])
@@ -93,7 +99,7 @@ def load_data():
 
         rename_map = { 
             col_name: 'Name', 
-            col_link: 'Link_Source', 
+            col_link: 'Link_Source', # 這裡存 OneDrive 連結
             col_voice: 'Voice', 
             col_main: 'Main_Style' 
         }
@@ -103,10 +109,11 @@ def load_data():
         
         df = df.rename(columns=rename_map)
         
+        # 處理空值與預設值
         if 'ID' not in df.columns: df['ID'] = df['Name']
         else: df['ID'] = df['ID'].astype(str)
 
-        # 預設 Link_Player = Link_Source
+        # 如果 Link_Player 沒填，就用 Link_Source 代替
         if 'Link_Player' not in df.columns: df['Link_Player'] = df['Link_Source']
         df['Link_Player'] = df['Link_Player'].fillna(df['Link_Source'])
 
@@ -118,17 +125,32 @@ def load_data():
     except:
         return pd.DataFrame()
 
-# === 5. 連結處理 ===
+# === 6. 連結處理 ===
 def get_clean_link(link):
     if not isinstance(link, str): return ""
     return link.replace('&download=1', '').replace('?download=1', '')
 
 def get_player_link(link):
     clean = get_clean_link(link)
+    # 確保播放連結有參數
     return clean + ('&download=1' if '?' in clean else '?download=1')
 
-# === 6. 手機紅按鈕 (內部用) ===
+# === 7. 播放器與按鈕元件 (V12 架構 + ID 修正) ===
+
+def render_safe_player(url, unique_id):
+    """
+    HTML5 播放器 (強制禁下載)
+    unique_id: 使用 ID 欄位，解決 PC 播放同一首問題
+    """
+    html = f"""
+        <audio id="audio_{unique_id}" controls controlsList="nodownload" oncontextmenu="return false;" style="width: 100%; margin-bottom: 5px;">
+            <source src="{url}" type="audio/mp3">
+        </audio>
+    """
+    st.markdown(html, unsafe_allow_html=True)
+
 def render_mobile_btn(url):
+    """手機專用的紅色大按鈕 (僅內部列表使用)"""
     st.markdown(f"""
         <div class="mobile-only" style="margin-bottom: 10px;">
             <a href="{url}" target="_blank" style="
@@ -140,36 +162,41 @@ def render_mobile_btn(url):
                 ▶️ 手機點此播放音檔
             </a>
             <div style="text-align:center; color:#666; font-size:12px; margin-top:5px;">
-                (開啟新視窗播放)
+                (開啟新視窗播放，無法隱藏下載)
             </div>
         </div>
     """, unsafe_allow_html=True)
 
-# === 7. 主程式 ===
+# === 8. 主程式 ===
 def main():
     params = st.query_params
     target_id = params.get("id", None)
-    target_name = params.get("n", None)
+    target_name = params.get("n", None) # 保留舊連結相容性
     
     df = load_data()
     if df.empty: return
 
-    # --- [模式 A] 外部分享 (客戶看) ---
+    # -------------------------------------------------------
+    # 【模式 A】客戶單一播放模式 (外部分享)
+    # -------------------------------------------------------
     target_row = pd.DataFrame()
-    if target_id: target_row = df[df['ID'] == target_id]
-    elif target_name: target_row = df[df['Name'] == target_name]
+    if target_id:
+        target_row = df[df['ID'] == target_id]
+    elif target_name:
+        target_row = df[df['Name'] == target_name]
         
     if not target_row.empty:
         item = target_row.iloc[0]
-        # 使用 Link_Player 確保播放相容性
+        
+        # 外部模式：使用 Link_Player
         play_source = get_player_link(item['Link_Player'])
         
         with st.container(border=True):
             st.subheader(f"🎵 {item['Name']}")
             
-            # 【回歸原廠】使用 st.audio (手機一定能聽)
-            # CSS 會負責隱藏下載按鈕
-            st.audio(play_source, format="audio/mp3")
+            # 【關鍵】外部模式：手機/PC 統一顯示播放器 (無下載鈕)
+            # 使用 ID 確保手機也能盡量讀取正確
+            render_safe_player(play_source, item['ID'])
             
             st.divider()
             st.warning("⚠️ 僅供內部試聽，禁止下載")
@@ -179,13 +206,16 @@ def main():
             st.rerun()
             
     elif (target_id or target_name) and target_row.empty:
-        st.error("找不到檔案")
+        st.error("找不到檔案，請確認連結是否正確。")
 
-    # --- [模式 B] 內部列表 ---
+    # -------------------------------------------------------
+    # 【模式 B】管理員模式 (內部使用)
+    # -------------------------------------------------------
     else:
         st.title("全家配音資料庫 📂")
 
         if "logged_in" not in st.session_state: st.session_state.logged_in = False
+        
         if not st.session_state.logged_in:
             with st.form("login_form"):
                 st.write("請輸入密碼")
@@ -199,7 +229,7 @@ def main():
             return
 
         with st.container(border=True):
-            search_name = st.text_input("👤 配音員名稱 / 關鍵字")
+            search_name = st.text_input("👤 配音員名稱 / 關鍵字", placeholder="例如：林佩璇...")
             
             col_t1, col_t2, col_t3 = st.columns(3)
             with col_t1: filter_male = st.checkbox("🙋‍♂️ 男聲")
@@ -230,15 +260,16 @@ def main():
         for _, row in results.head(20).iterrows():
             with st.expander(f"📄 {row['Name']}"):
                 
-                player_src = get_player_link(row['Link_Player']) # 播放器用
-                source_src = get_clean_link(row['Link_Source'])  # 紅按鈕用 (OneDrive)
+                # 連結來源分離
+                player_src = get_player_link(row['Link_Player']) # 給 PC 播放器
+                source_src = get_clean_link(row['Link_Source'])  # 給手機紅按鈕 (OneDrive)
                 
-                # 1. PC 顯示原廠播放器 (st.audio)
-                st.markdown('<div class="pc-only">', unsafe_allow_html=True)
-                st.audio(player_src, format="audio/mp3")
+                # 1. PC 顯示播放器 (使用 ID 修復)
+                st.markdown(f'<div class="pc-only">', unsafe_allow_html=True)
+                render_safe_player(player_src, row['ID'])
                 st.markdown('</div>', unsafe_allow_html=True)
                 
-                # 2. 手機顯示紅按鈕 (內部用)
+                # 2. 手機顯示紅按鈕 (V12 原本的樣子)
                 render_mobile_btn(source_src)
                 
                 b1, b2 = st.columns(2)
@@ -247,6 +278,7 @@ def main():
                         show_share_dialog("內部分享連結 (OneDrive)", source_src)
                 with b2:
                     if st.button("🌏 外部分享", key=f"out_{row['ID']}"):
+                        # 使用 ID 產生乾淨連結
                         share_link = f"{SITE_URL}?id={row['ID']}"
                         show_share_dialog("外部分享連結 (客戶試聽用)", share_link)
 
