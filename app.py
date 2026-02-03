@@ -8,8 +8,7 @@ CSV_URL = "https://docs.google.com/spreadsheets/d/e/2PACX-1vQWueqZqoUXP7YM_UDDAe
 PASSWORD = "888"
 
 # 【關鍵】請填入您部署後的 Streamlit App 網址
-# 網址結尾不要有斜線 /
-# 例如： https://familymart-voice.streamlit.app
+# 請看您瀏覽器上方的網址列，把它複製過來 (結尾不要有斜線 /)
 SITE_URL = "https://swd-voice.streamlit.app/" 
 
 # === 2. 頁面設定與 CSS 黑魔法 (隱藏下載按鈕) ===
@@ -103,7 +102,7 @@ def main():
                 
                 st.divider()
                 
-                # 2. 手機版救援按鈕
+                # 2. 手機版救援按鈕 (直接開啟檔案，不透過播放器，解決手機相容性)
                 st.caption("若手機無法播放，請點擊下方按鈕：")
                 st.link_button("↗ 開啟備用播放連結", get_player_link(item['Link']))
 
@@ -166,6 +165,8 @@ def main():
                 # 產生分享連結 (網址編碼處理)
                 # 使用 urllib.parse.quote 確保中文字不會變成亂碼導致無法開啟
                 safe_name = urllib.parse.quote(row['Name'])
+                
+                # 【修正點】這裡會組合成完整的網址
                 share_link = f"{SITE_URL}?n={safe_name}"
                 
                 st.text_input("🌏 外部分享連結 (客戶只能看到這個檔)", value=share_link, key=f"link_{row['Name']}")
