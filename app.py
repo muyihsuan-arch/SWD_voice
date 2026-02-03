@@ -9,28 +9,26 @@ PASSWORD = "888"
 # 【關鍵】請確認這是您 App 的網址
 SITE_URL = "https://swd-voice.streamlit.app"
 
-# === 2. 頁面與 CSS 設定 (RWD 分流核心) ===
+# === 2. 頁面與 CSS 設定 ===
 st.set_page_config(page_title="全家配音試聽", layout="centered")
 
 st.markdown("""
     <style>
-        /* === 手機/電腦 分流控制 === */
+        /* === RWD 分流設定 === */
         
-        /* 1. 電腦版 (螢幕 > 900px) */
+        /* 電腦版 (螢幕 > 900px)：隱藏手機按鈕 */
         @media (min-width: 901px) {
-            .mobile-only { display: none !important; } /* 隱藏手機按鈕 */
-            .stAudio { display: block !important; }    /* 顯示播放器 */
+            .mobile-only { display: none !important; }
         }
         
-        /* 2. 手機版 (螢幕 <= 900px) */
+        /* 手機/平板版 (螢幕 <= 900px)：隱藏電腦播放器，顯示手機按鈕 */
+        /* 注意：在外部分享模式下，我們會強制顯示播放器 */
         @media (max-width: 900px) {
-            .mobile-only { display: block !important; } /* 顯示手機按鈕 */
-            .stAudio { display: none !important; }      /* 隱藏播放器 (避免報錯) */
+            .pc-only { display: none !important; }
+            .mobile-only { display: block !important; }
         }
 
-        /* === 視覺優化 === */
-        
-        /* 隱藏播放器的下載選單 (針對 st.audio) */
+        /* 隱藏原生播放器的下載選單 */
         audio::-webkit-media-controls-enclosure { overflow: hidden; }
         audio::-webkit-media-controls-panel { width: calc(100% + 30px); }
         
@@ -40,7 +38,7 @@ st.markdown("""
     </style>
 """, unsafe_allow_html=True)
 
-# === 3. 核心功能：自製「一鍵複製」按鈕 ===
+# === 3. 核心功能：自製「一鍵複製」按鈕 (HTML/JS) ===
 def render_copy_ui(text_to_copy):
     html_code = f"""
     <div style="background-color: #f0f2f6; padding: 15px; border-radius: 10px;">
@@ -117,8 +115,23 @@ def get_player_link(link):
     clean = get_clean_link(link)
     return clean + ('&download=1' if '?' in clean else '?download=1')
 
-# === 7. 手機按鈕 (紅色顯眼版) ===
+# === 7. 播放器與按鈕元件 (修復 ID 問題) ===
+
+def render_safe_player(url, unique_id):
+    """
+    安全的嵌入式播放器
+    unique_id: 使用檔名當作 ID，解決 PC 播放同一首的問題
+    """
+    # 這裡的 HTML id 用了 unique_id，保證每個播放器都是獨立的
+    html = f"""
+        <audio id="audio_{unique_id}" controls controlsList="nodownload" oncontextmenu="return false;" style="width: 100%; margin-bottom: 5px;">
+            <source src="{url}" type="audio/mp3">
+        </audio>
+    """
+    st.markdown(html, unsafe_allow_html=True)
+
 def render_mobile_btn(url):
+    """手機專用的紅色大按鈕 (僅內部列表使用)"""
     st.markdown(f"""
         <div class="mobile-only" style="margin-bottom: 10px;">
             <a href="{url}" target="_blank" style="
@@ -130,7 +143,7 @@ def render_mobile_btn(url):
                 ▶️ 手機點此播放音檔
             </a>
             <div style="text-align:center; color:#666; font-size:12px; margin-top:5px;">
-                (將開啟新視窗播放，無法下載)
+                (開啟新視窗播放，無法隱藏下載)
             </div>
         </div>
     """, unsafe_allow_html=True)
@@ -142,7 +155,9 @@ def main():
     df = load_data()
     if df.empty: return
 
-    # --- [模式 A] 客戶單一播放模式 ---
+    # -------------------------------------------------------
+    # 【模式 A】客戶單一播放模式 (嚴格禁止下載)
+    # -------------------------------------------------------
     if target_name:
         row = df[df['Name'] == target_name]
         if not row.empty:
@@ -153,11 +168,10 @@ def main():
             with st.container(border=True):
                 st.subheader(f"🎵 {item['Name']}")
                 
-                # 1. 電腦顯示播放器 (使用官方元件，保證正確)
-                st.audio(play_link, format="audio/mp3")
-                
-                # 2. 手機顯示大按鈕
-                render_mobile_btn(play_link)
+                # 【關鍵修正】外部分享模式，手機也要用嵌入式 Player (不能用紅按鈕，因為紅按鈕=可下載)
+                # 因為修好了 ID 問題，現在這個 Player 在手機上應該也能跑了
+                # 使用 item['Name'] 當作 ID，絕對唯一
+                render_safe_player(play_link, item['Name'])
                 
                 st.divider()
                 st.warning("⚠️ 僅供內部試聽，禁止下載")
@@ -168,20 +182,26 @@ def main():
         else:
             st.error("找不到檔案")
 
-    # --- [模式 B] 管理員模式 ---
+    # -------------------------------------------------------
+    # 【模式 B】管理員模式 (內部使用)
+    # -------------------------------------------------------
     else:
         st.title("全家配音資料庫 📂")
 
         if "logged_in" not in st.session_state: st.session_state.logged_in = False
         
         if not st.session_state.logged_in:
-            pw = st.text_input("請輸入密碼", type="password")
-            if st.button("登入", type="primary", use_container_width=True):
-                if pw == PASSWORD:
-                    st.session_state.logged_in = True
-                    st.rerun()
-                else:
-                    st.error("密碼錯誤")
+            # 【關鍵修正】使用 st.form 讓 Enter 鍵生效
+            with st.form("login_form"):
+                st.write("請輸入密碼")
+                pw = st.text_input("Password", type="password", label_visibility="collapsed")
+                # 這個按鈕會在按下 Enter 時自動觸發
+                if st.form_submit_button("登入", type="primary", use_container_width=True):
+                    if pw == PASSWORD:
+                        st.session_state.logged_in = True
+                        st.rerun()
+                    else:
+                        st.error("密碼錯誤")
             return
 
         with st.container(border=True):
@@ -213,16 +233,17 @@ def main():
         results = df[mask]
         st.caption(f"🎯 共找到 {len(results)} 筆資料")
 
-        # 這裡的寫法改了：改用 Streamlit 原生播放器 + 唯一 key
         for _, row in results.head(20).iterrows():
             with st.expander(f"📄 {row['Name']}"):
                 clean_link = get_clean_link(row['Link'])
                 play_link = get_player_link(clean_link)
                 
-                # 1. PC 播放器 (加了 key 參數，保證絕對不會重複)
-                st.audio(play_link, format="audio/mp3")
+                # 1. PC 顯示嵌入式播放器 (帶有 Unique ID)
+                st.markdown(f'<div class="pc-only">', unsafe_allow_html=True)
+                render_safe_player(play_link, row['Name']) # 傳入檔名當 ID
+                st.markdown('</div>', unsafe_allow_html=True)
                 
-                # 2. 手機按鈕
+                # 2. 手機顯示大按鈕 (僅內部列表方便用，反正內部人可以下載沒關係)
                 render_mobile_btn(play_link)
                 
                 b1, b2 = st.columns(2)
