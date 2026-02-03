@@ -9,7 +9,7 @@ PASSWORD = "888"
 # 【關鍵】請確認這是您 App 的網址
 SITE_URL = "https://swd-voice.streamlit.app"
 
-# === 2. 頁面與 CSS 設定 ===
+# === 2. 頁面與 CSS 設定 (嚴格還原 V12 的 CSS) ===
 st.set_page_config(page_title="全家配音試聽", layout="centered")
 
 st.markdown("""
@@ -22,6 +22,7 @@ st.markdown("""
         }
         
         /* 手機/平板版 (螢幕 <= 900px)：隱藏電腦播放器，顯示手機按鈕 */
+        /* 注意：在外部分享模式下，我們會強制顯示播放器 */
         @media (max-width: 900px) {
             .pc-only { display: none !important; }
             .mobile-only { display: block !important; }
@@ -72,7 +73,7 @@ def show_share_dialog(title, link):
     st.caption(f"{title}")
     render_copy_ui(link)
 
-# === 5. 資料讀取 (讀取 Link_Player) ===
+# === 5. 資料讀取 (加入 ID 和 Link_Player) ===
 @st.cache_data(ttl=600)
 def load_data():
     try:
@@ -88,7 +89,7 @@ def load_data():
         col_id = get_col(["id", "編號"])
         col_name = get_col(["filename", "name", "檔名"])
         col_link = get_col(["link_source", "link", "連結"])
-        # 【關鍵】讀取 Link_Player 欄位
+        # 新增讀取 Player 連結
         col_player = get_col(["link_player", "player", "播放連結"])
         col_voice = get_col(["voice", "category", "聲線"])
         col_main = get_col(["style", "主風格"])
@@ -98,23 +99,23 @@ def load_data():
 
         rename_map = { 
             col_name: 'Name', 
-            col_link: 'Link_Source', # 這裡改名為 Link_Source 以示區別
+            col_link: 'Link_Source', # 這裡存 OneDrive 連結
             col_voice: 'Voice', 
             col_main: 'Main_Style' 
         }
         if col_id: rename_map[col_id] = 'ID'
-        if col_player: rename_map[col_player] = 'Link_Player' # 存入 Link_Player
+        if col_player: rename_map[col_player] = 'Link_Player'
         if col_sec: rename_map[col_sec] = 'Sec_Style'
         
         df = df.rename(columns=rename_map)
         
-        # 處理空值
+        # 處理空值與預設值
         if 'ID' not in df.columns: df['ID'] = df['Name']
         else: df['ID'] = df['ID'].astype(str)
-        
-        # 如果沒有 Link_Player 欄位，就暫時用 Link_Source 頂替 (防呆)
-        if 'Link_Player' not in df.columns:
-            df['Link_Player'] = df['Link_Source']
+
+        # 如果 Link_Player 沒填，就用 Link_Source 代替
+        if 'Link_Player' not in df.columns: df['Link_Player'] = df['Link_Source']
+        df['Link_Player'] = df['Link_Player'].fillna(df['Link_Source'])
 
         if 'Sec_Style' not in df.columns: df['Sec_Style'] = ""
         df['Main_Style'] = df['Main_Style'].fillna("未分類")
@@ -124,37 +125,35 @@ def load_data():
     except:
         return pd.DataFrame()
 
-# === 6. 連結處理 (確保播放連結正確) ===
+# === 6. 連結處理 ===
 def get_clean_link(link):
     if not isinstance(link, str): return ""
     return link.replace('&download=1', '').replace('?download=1', '')
 
 def get_player_link(link):
-    # 針對 Link_Player 做的處理，確保它有下載參數 (如果它是 SharePoint 連結的話)
-    # 如果 Link_Player 已經是直連網址，這段通常不會有副作用
     clean = get_clean_link(link)
+    # 確保播放連結有參數
     return clean + ('&download=1' if '?' in clean else '?download=1')
 
-# === 7. 播放器與按鈕元件 ===
+# === 7. 播放器與按鈕元件 (V12 架構 + ID 修正) ===
 
-def render_hybrid_player(audio_url, button_url, unique_id, mode="internal"):
+def render_safe_player(url, unique_id):
     """
-    audio_url: 給播放器吃的 (Link_Player) -> 確保能播
-    button_url: 給紅按鈕吃的 (Link_Source) -> 確保開 OneDrive
+    HTML5 播放器 (強制禁下載)
+    unique_id: 使用 ID 欄位，解決 PC 播放同一首問題
     """
-    
-    # 播放器 HTML (嚴格禁止下載)
-    player_html = f"""
+    html = f"""
         <audio id="audio_{unique_id}" controls controlsList="nodownload" oncontextmenu="return false;" style="width: 100%; margin-bottom: 5px;">
-            <source src="{audio_url}" type="audio/mp3">
-            您的瀏覽器不支援播放
+            <source src="{url}" type="audio/mp3">
         </audio>
     """
-    
-    # 手機紅按鈕 HTML (點了開 OneDrive)
-    btn_html = f"""
+    st.markdown(html, unsafe_allow_html=True)
+
+def render_mobile_btn(url):
+    """手機專用的紅色大按鈕 (僅內部列表使用)"""
+    st.markdown(f"""
         <div class="mobile-only" style="margin-bottom: 10px;">
-            <a href="{button_url}" target="_blank" style="
+            <a href="{url}" target="_blank" style="
                 display: block; width: 100%; padding: 15px; 
                 background-color: #FF4B4B; color: white; 
                 text-align: center; text-decoration: none; 
@@ -166,28 +165,13 @@ def render_hybrid_player(audio_url, button_url, unique_id, mode="internal"):
                 (開啟新視窗播放，無法隱藏下載)
             </div>
         </div>
-    """
-
-    if mode == "internal":
-        # 內部模式：PC 顯示播放器，手機顯示紅按鈕
-        # 使用 HTML 結構包覆，確保 CSS .pc-only 生效
-        full_html = f"""
-            <div class="pc-only">
-                {player_html}
-            </div>
-            {btn_html}
-        """
-        st.markdown(full_html, unsafe_allow_html=True)
-        
-    else: # mode == "external"
-        # 外部分享：全裝置強制顯示播放器 (不能下載)
-        st.markdown(player_html, unsafe_allow_html=True)
+    """, unsafe_allow_html=True)
 
 # === 8. 主程式 ===
 def main():
     params = st.query_params
     target_id = params.get("id", None)
-    target_name = params.get("n", None)
+    target_name = params.get("n", None) # 保留舊連結相容性
     
     df = load_data()
     if df.empty: return
@@ -204,14 +188,15 @@ def main():
     if not target_row.empty:
         item = target_row.iloc[0]
         
-        # 【關鍵】播放器使用 Link_Player
+        # 外部模式：使用 Link_Player
         play_source = get_player_link(item['Link_Player'])
         
         with st.container(border=True):
             st.subheader(f"🎵 {item['Name']}")
             
-            # 外部模式：只顯示播放器 (使用 Link_Player 確保手機可播)
-            render_hybrid_player(audio_url=play_source, button_url="", unique_id=item['ID'], mode="external")
+            # 【關鍵】外部模式：手機/PC 統一顯示播放器 (無下載鈕)
+            # 使用 ID 確保手機也能盡量讀取正確
+            render_safe_player(play_source, item['ID'])
             
             st.divider()
             st.warning("⚠️ 僅供內部試聽，禁止下載")
@@ -275,21 +260,25 @@ def main():
         for _, row in results.head(20).iterrows():
             with st.expander(f"📄 {row['Name']}"):
                 
-                # 【關鍵】來源分離
-                # 1. 給播放器吃的：Link_Player (確保手機外部能播)
-                player_src = get_player_link(row['Link_Player'])
-                # 2. 給紅按鈕吃的：Link_Source (確保開 OneDrive)
-                btn_src = get_clean_link(row['Link_Source'])
+                # 連結來源分離
+                player_src = get_player_link(row['Link_Player']) # 給 PC 播放器
+                source_src = get_clean_link(row['Link_Source'])  # 給手機紅按鈕 (OneDrive)
                 
-                # 內部模式：PC 顯示 Player, 手機顯示紅按鈕
-                render_hybrid_player(audio_url=player_src, button_url=btn_src, unique_id=row['ID'], mode="internal")
+                # 1. PC 顯示播放器 (使用 ID 修復)
+                st.markdown(f'<div class="pc-only">', unsafe_allow_html=True)
+                render_safe_player(player_src, row['ID'])
+                st.markdown('</div>', unsafe_allow_html=True)
+                
+                # 2. 手機顯示紅按鈕 (V12 原本的樣子)
+                render_mobile_btn(source_src)
                 
                 b1, b2 = st.columns(2)
                 with b1:
                     if st.button("📋 內部分享", key=f"in_{row['ID']}"):
-                        show_share_dialog("內部分享連結 (OneDrive)", btn_src)
+                        show_share_dialog("內部分享連結 (OneDrive)", source_src)
                 with b2:
                     if st.button("🌏 外部分享", key=f"out_{row['ID']}"):
+                        # 使用 ID 產生乾淨連結
                         share_link = f"{SITE_URL}?id={row['ID']}"
                         show_share_dialog("外部分享連結 (客戶試聽用)", share_link)
 
