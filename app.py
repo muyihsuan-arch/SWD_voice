@@ -1,23 +1,46 @@
 import streamlit as st
 import pandas as pd
+import urllib.parse
 
-# === 1. 設定區 ===
+# === 1. 設定區 (請務必修改這裡) ===
 # 您的 Google Sheet CSV 連結
 CSV_URL = "https://docs.google.com/spreadsheets/d/e/2PACX-1vQWueqZqoUXP7YM_UDDAedhAjYQI80RoNapxH8YyKbyLkq8L_CprL2eeQ7DEPBqdxqJCRVCiaRp9l6S/pub?output=csv"
 PASSWORD = "888"
 
-# 設定網頁標題與寬度
-st.set_page_config(page_title="全家配音資料庫", layout="centered")
+# 【關鍵】請填入您部署後的 Streamlit App 網址
+# 網址結尾不要有斜線 /
+# 例如： https://familymart-voice.streamlit.app
+SITE_URL = "https://familymart-voice.streamlit.app" 
 
-# === 2. 核心功能：讀取與清理資料 ===
-@st.cache_data(ttl=600)  # 快取 10 分鐘，避免一直讀取 Sheet
+# === 2. 頁面設定與 CSS 黑魔法 (隱藏下載按鈕) ===
+st.set_page_config(page_title="全家配音試聽", layout="centered")
+
+# 這段 CSS 會強制把播放器的「下載按鈕」藏起來
+st.markdown("""
+    <style>
+        /* 隱藏 Chrome/Edge/Safari 播放器的下載選單 */
+        audio::-webkit-media-controls-enclosure {
+            overflow: hidden;
+        }
+        audio::-webkit-media-controls-panel {
+            width: calc(100% + 30px); /* 加寬把右邊的點點擠出去 */
+        }
+        /* 針對 Streamlit 的微調 */
+        .stAudio {
+            margin-top: 10px;
+            margin-bottom: 10px;
+        }
+    </style>
+""", unsafe_allow_html=True)
+
+# === 3. 讀取資料 ===
+@st.cache_data(ttl=600)
 def load_data():
     try:
         df = pd.read_csv(CSV_URL)
-        # 清理欄位名稱 (去除前後空白)
-        df.columns = df.columns.str.strip()
+        df.columns = df.columns.str.strip() # 清除欄位空白
         
-        # 自動對應欄位 (不分大小寫)
+        # 自動找欄位
         def get_col(candidates):
             for c in df.columns:
                 if any(x in c.lower() for x in candidates):
@@ -30,94 +53,78 @@ def load_data():
         col_style = get_col(["style", "type", "風格"])
 
         if not col_link:
-            st.error("❌ 錯誤：找不到連結欄位 (Link_Source)")
+            st.error("❌ 資料讀取錯誤：找不到連結欄位")
             return pd.DataFrame()
 
-        # 重新命名以便後續操作
         df = df.rename(columns={
-            col_name: 'Name',
-            col_link: 'Link',
-            col_voice: 'Voice',
-            col_style: 'Style'
+            col_name: 'Name', col_link: 'Link',
+            col_voice: 'Voice', col_style: 'Style'
         })
-        
-        # 移除沒有連結的空資料
-        df = df.dropna(subset=['Link'])
-        return df
+        return df.dropna(subset=['Link'])
     except Exception as e:
-        st.error(f"資料讀取失敗: {e}")
+        st.error(f"讀取失敗: {e}")
         return pd.DataFrame()
 
-# === 3. 連結處理工具 ===
-def process_link(raw_link, for_player=True):
-    """
-    處理 OneDrive 連結
-    for_player=True:  強制加上 download=1 (給播放器用)
-    for_player=False: 強制移除 download=1 (給手機按鈕/預覽用)
-    """
+# === 4. 連結處理工具 ===
+def get_player_link(raw_link):
+    """確保連結可以串流播放 (強制 download=1)"""
     if not isinstance(raw_link, str): return ""
     clean = raw_link.replace('&download=1', '').replace('?download=1', '')
-    
-    if for_player:
-        return clean + ('&download=1' if '?' in clean else '?download=1')
-    else:
-        return clean
+    return clean + ('&download=1' if '?' in clean else '?download=1')
 
-# === 4. 主程式邏輯 ===
+# === 5. 主程式 ===
 def main():
-    # 讀取網址參數 (例如 ?n=林佩璇)
+    # 抓取網址參數 ?n=...
     params = st.query_params
     target_name = params.get("n", None)
-
-    # 載入資料
+    
     df = load_data()
-    if df.empty:
-        return
+    if df.empty: return
 
     # -------------------------------------------------------
-    # 【模式 A】客戶單一播放模式 (網址有帶 ?n=...)
+    # 【模式 A】客戶模式：網址有帶 ?n=檔名
     # -------------------------------------------------------
     if target_name:
-        # 搜尋該檔案 (模糊比對，避免中文字編碼問題)
-        # case=False (不分大小寫), na=False (忽略空值)
-        results = df[df['Name'].str.contains(target_name, case=False, na=False)]
-
-        if not results.empty:
-            item = results.iloc[0] # 取第一筆結果
+        # 進行搜尋
+        row = df[df['Name'] == target_name]
+        
+        if not row.empty:
+            item = row.iloc[0]
             
-            st.markdown(f"### 🎧 {item['Name']}")
-            st.caption(f"分類：{item.get('Voice', '未分類')} | 風格：{item.get('Style', '未分類')}")
+            # --- 單一播放器介面 ---
+            with st.container(border=True):
+                st.subheader(f"🎵 {item['Name']}")
+                st.caption(f"全家配音資料庫 | {item.get('Voice','')} | {item.get('Style','')}")
+                
+                # 1. 播放器 (已隱藏下載鈕)
+                st.audio(get_player_link(item['Link']), format="audio/mp3")
+                
+                st.warning("⚠️ 僅供內部試聽，請勿下載或外流")
+                
+                st.divider()
+                
+                # 2. 手機版救援按鈕
+                st.caption("若手機無法播放，請點擊下方按鈕：")
+                st.link_button("↗ 開啟備用播放連結", get_player_link(item['Link']))
 
-            # 播放器 (PC/Mobile 通用)
-            # Streamlit 的 st.audio 非常穩定
-            player_url = process_link(item['Link'], for_player=True)
-            st.audio(player_url, format="audio/mp3")
-
-            st.info("💡 僅供內部試聽，請勿外流")
-
-            st.divider()
-            
-            # 手機版救援按鈕 (如果播放器跑不動，點這個去 OneDrive)
-            preview_url = process_link(item['Link'], for_player=False)
-            st.link_button("↗ 若無法播放，請點此開啟來源 (OneDrive)", preview_url)
-
-            # 讓客戶可以回到首頁 (選用)
-            if st.button("🔍 回到搜尋首頁"):
-                st.query_params.clear() # 清除參數
-                st.rerun() # 重新整理
+            # 讓客戶可以回首頁 (選用)
+            if st.button("🏠 返回搜尋首頁"):
+                st.query_params.clear()
+                st.rerun()
+                
         else:
-            st.error(f"❌ 找不到檔案：{target_name}")
+            st.error("找不到該檔案，可能是連結錯誤或檔案已移除。")
             if st.button("回首頁"):
                 st.query_params.clear()
                 st.rerun()
 
     # -------------------------------------------------------
-    # 【模式 B】管理員/搜尋模式 (網址乾淨)
+    # 【模式 B】管理員模式：網址乾淨
     # -------------------------------------------------------
     else:
-        st.title("全家配音資料庫 📂")
+        st.title("全家配音資料庫 (管理端)")
 
-        # 登入驗證 (Session State)
+        # 登入檢查
         if "logged_in" not in st.session_state:
             st.session_state.logged_in = False
 
@@ -130,63 +137,40 @@ def main():
                         st.rerun()
                     else:
                         st.error("密碼錯誤")
-            return # 沒登入就停在這裡
+            return
 
-        # --- 登入後的介面 ---
-        
-        # 1. 頂部篩選區
+        # --- 登入後介面 ---
         col1, col2 = st.columns(2)
         with col1:
-            voices = ["全部"] + list(df['Voice'].unique())
-            selected_voice = st.selectbox("聲線分類", voices)
+            v_filter = st.selectbox("聲線", ["全部"] + list(df['Voice'].unique()))
         with col2:
-            styles = ["全部"] + list(df['Style'].unique())
-            selected_style = st.selectbox("風格分類", styles)
-
-        # 2. 關鍵字搜尋
-        keyword = st.text_input("🔍 搜尋檔名", placeholder="請輸入關鍵字...")
-
-        # 3. 執行篩選
-        filtered_df = df.copy()
-        if selected_voice != "全部":
-            filtered_df = filtered_df[filtered_df['Voice'] == selected_voice]
-        if selected_style != "全部":
-            filtered_df = filtered_df[filtered_df['Style'] == selected_style]
-        if keyword:
-            filtered_df = filtered_df[filtered_df['Name'].str.contains(keyword, case=False, na=False)]
-
-        st.markdown(f"**共找到 {len(filtered_df)} 筆資料**")
-
-        # 4. 顯示列表
-        # 為了效能，如果沒搜尋關鍵字，只顯示前 10 筆，避免 OneDrive 爆炸
-        show_limit = 10 if not keyword else 100
+            s_filter = st.selectbox("風格", ["全部"] + list(df['Style'].unique()))
         
-        for index, row in filtered_df.head(show_limit).iterrows():
-            with st.expander(f"🎵 {row['Name']}"):
-                # 播放器
-                play_link = process_link(row['Link'], for_player=True)
-                st.audio(play_link, format='audio/mp3')
-                
-                # 按鈕區
-                c1, c2 = st.columns(2)
-                with c1:
-                    # 內部連結
-                    view_link = process_link(row['Link'], for_player=False)
-                    st.link_button("🏢 內部連結 (OneDrive)", view_link)
-                
-                with c2:
-                    # 產生單一分享連結
-                    # 注意：這裡會自動抓取當前 app 的網址
-                    # 如果在本機測試，它會是 localhost，部署後會是 share.streamlit.io...
-                    base_url = "https://share.streamlit.io" # 部署後請確認您的實際網址前綴
-                    # 不過 Streamlit 很聰明，我們只要顯示參數部分即可
-                    
-                    share_link = f"?n={row['Name']}"
-                    st.code(share_link, language="text")
-                    st.caption("👆 複製上方參數，加在網址後面即可分享")
+        keyword = st.text_input("🔍 搜尋檔名", placeholder="輸入關鍵字...")
 
-        if len(filtered_df) > show_limit:
-            st.info("...還有更多資料，請輸入關鍵字縮小範圍")
+        # 篩選邏輯
+        mask = pd.Series([True] * len(df))
+        if v_filter != "全部": mask &= (df['Voice'] == v_filter)
+        if s_filter != "全部": mask &= (df['Style'] == s_filter)
+        if keyword: mask &= df['Name'].str.contains(keyword, case=False, na=False)
+        
+        results = df[mask]
+        st.write(f"共找到 {len(results)} 筆")
+
+        # 顯示列表 (限制 20 筆以免太長)
+        for _, row in results.head(20).iterrows():
+            with st.expander(f"📄 {row['Name']}"):
+                # 播放器
+                st.audio(get_player_link(row['Link']), format='audio/mp3')
+                
+                # 產生分享連結 (網址編碼處理)
+                # 使用 urllib.parse.quote 確保中文字不會變成亂碼導致無法開啟
+                safe_name = urllib.parse.quote(row['Name'])
+                share_link = f"{SITE_URL}?n={safe_name}"
+                
+                st.text_input("🌏 外部分享連結 (客戶只能看到這個檔)", value=share_link, key=f"link_{row['Name']}")
+                
+                st.caption("👆 複製上方連結傳給客戶即可")
 
 if __name__ == "__main__":
     main()
