@@ -126,7 +126,7 @@ def get_player_link(link):
     clean = get_clean_link(link)
     return clean + ('&download=1' if '?' in clean else '?download=1')
 
-# === 7. UI 元件：手機按鈕 ===
+# === 7. UI 元件：手機按鈕 (修正為紅色試聽鈕) ===
 def render_mobile_btn(url):
     st.markdown(f"""
         <div class="mobile-only" style="margin-bottom: 10px;">
@@ -136,7 +136,7 @@ def render_mobile_btn(url):
                 text-align: center; text-decoration: none; 
                 font-size: 16px; font-weight: bold; border-radius: 8px;
                 box-shadow: 0 2px 4px rgba(0,0,0,0.1);">
-                ▶️ 試聽 (開啟 OneDrive)
+                ▶️ 手機點此試聽 (開啟 OneDrive)
             </a>
         </div>
     """, unsafe_allow_html=True)
@@ -148,7 +148,9 @@ def main():
     df = load_data()
     if df.empty: return
 
-    # --- [模式 A] 客戶單一播放模式 (外部分享) ---
+    # -------------------------------------------------------
+    # 【模式 A】客戶單一播放模式 (外部分享)
+    # -------------------------------------------------------
     if target_name:
         row = df[df['Name'] == target_name]
         
@@ -169,7 +171,7 @@ def main():
                     </div>
                 """, unsafe_allow_html=True)
                 
-                # Mobile: 顯示試聽按鈕
+                # Mobile: 顯示試聽按鈕 (這裡只是連結到音檔，不是下載頁)
                 render_mobile_btn(clean_link)
                 
                 st.divider()
@@ -181,15 +183,19 @@ def main():
         else:
             st.error("找不到檔案")
 
-    # --- [模式 B] 管理員模式 ---
+    # -------------------------------------------------------
+    # 【模式 B】管理員模式
+    # -------------------------------------------------------
     else:
         st.title("全家配音資料庫 📂")
 
+        # 簡單登入邏輯 (修正為直接顯示)
         if "logged_in" not in st.session_state: st.session_state.logged_in = False
+        
         if not st.session_state.logged_in:
-            # 單一輸入框直接登入
+            # 移除 st.form，改為直接顯示
             pw = st.text_input("請輸入密碼", type="password")
-            if pw and st.button("登入"):
+            if st.button("登入", type="primary", use_container_width=True):
                 if pw == PASSWORD:
                     st.session_state.logged_in = True
                     st.rerun()
@@ -200,7 +206,7 @@ def main():
         # === 搜尋與篩選區 ===
         with st.container(border=True):
             # 1. 搜尋 Bar
-            search_name = st.text_input("🔍 配音員名稱 / 關鍵字", placeholder="例如：林佩璇...")
+            search_name = st.text_input("👤 配音員名稱 / 關鍵字", placeholder="例如：林佩璇...")
             
             # 2. 標籤按鈕 (Tags)
             col_t1, col_t2, col_t3 = st.columns(3)
