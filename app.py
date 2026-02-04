@@ -231,7 +231,7 @@ def main():
         for _, row in results.head(20).iterrows():
             with st.expander(f"📄 {row['Name']}"):
                 
-                player_src = get_player_link(row['Link_Player']) # 直取原始連結
+                player_src = get_player_link(row['Link_Source']) # 直取原始連結
                 source_src = get_clean_link(row['Link_Source'])  # 直取原始連結
                 
                 # 1. PC 播放器
