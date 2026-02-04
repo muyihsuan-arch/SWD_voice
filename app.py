@@ -3,16 +3,18 @@ import pandas as pd
 import streamlit.components.v1 as components
 import requests
 import base64
+import urllib.parse
 
 # === 1. 設定區 ===
 CSV_URL = "https://docs.google.com/spreadsheets/d/e/2PACX-1vQWueqZqoUXP7YM_UDDAedhAjYQI80RoNapxH8YyKbyLkq8L_CprL2eeQ7DEPBqdxqJCRVCiaRp9l6S/pub?output=csv"
 PASSWORD = "888"
 SITE_URL = "https://swd-voice.streamlit.app"
 
-# === 2. 核心技術：Base64 抓取函數 ===
+# === 2. 核心技術：Base64 抓取函數 (解決 Safari 轉址問題) ===
 @st.cache_data(ttl=600)
 def get_audio_base64(url):
     if not isinstance(url, str) or url == "": return None
+    # 針對 SharePoint 轉直連
     target_url = url.split('?')[0] + "?download=1" if "sharepoint.com" in url else url
     try:
         headers = {'User-Agent': 'Mozilla/5.0'}
@@ -23,60 +25,78 @@ def get_audio_base64(url):
     except: return None
     return None
 
-# === 3. 頁面配置與 CSS ===
+# === 3. 頁面與 CSS 設定 (維持您原本的 RWD 與播放器樣式) ===
 st.set_page_config(page_title="全家配音試聽", layout="centered")
 
 st.markdown("""
     <style>
-        /* 隱藏原生播放器的下載選單 (針對 Webkit) */
+        @media (min-width: 901px) { .mobile-only { display: none !important; } }
+        @media (max-width: 900px) {
+            .pc-only { display: none !important; }
+            .mobile-only { display: block !important; }
+        }
         audio::-webkit-media-controls-enclosure { overflow: hidden; }
         audio::-webkit-media-controls-panel { width: calc(100% + 30px); }
         .stButton button { border-radius: 8px; font-weight: bold; }
-        
-        /* 針對 PC 的額外保護：禁用右鍵 */
-        audio { pointer-events: auto; }
+        div[data-testid="stCheckbox"] label { font-size: 16px !important; font-weight: bold; }
     </style>
 """, unsafe_allow_html=True)
 
-# === 4. 資料讀取 (恢復完整欄位) ===
+# === 4. 複製按鈕元件 (原本的漂亮的 Dialog 元件) ===
+def render_copy_ui(text_to_copy):
+    html_code = f"""
+    <div style="background-color: #f0f2f6; padding: 15px; border-radius: 10px;">
+        <label style="font-size:14px; color:#333; font-weight:bold; margin-bottom:5px; display:block;">👇 連結網址</label>
+        <input type="text" value="{text_to_copy}" id="copyInput" readonly 
+            style="width: 100%; padding: 10px; border: 1px solid #ddd; border-radius: 5px; font-size: 14px; color: #555; background-color: #fff; margin-bottom: 10px;">
+        <button onclick="copyToClipboard()" 
+            style="width: 100%; padding: 12px; background-color: #28a745; color: white; border: none; border-radius: 5px; font-size: 16px; font-weight: bold; cursor: pointer;">
+            📋 點此一鍵複製
+        </button>
+        <script>
+            function copyToClipboard() {{
+                var copyText = document.getElementById("copyInput");
+                copyText.select();
+                copyText.setSelectionRange(0, 99999);
+                navigator.clipboard.writeText(copyText.value).then(function() {{
+                    alert("✅ 複製成功！");
+                }});
+            }}
+        </script>
+    </div>
+    """
+    components.html(html_code, height=180)
+
+@st.dialog("🔗 分享連結")
+def show_share_dialog(title, link):
+    st.caption(f"{title}")
+    render_copy_ui(link)
+
+# === 5. 資料讀取 (完整的欄位對應邏輯) ===
 @st.cache_data(ttl=600)
 def load_data():
     try:
         df = pd.read_csv(CSV_URL)
         df.columns = df.columns.str.strip()
-        
         def get_col(candidates):
             for c in df.columns:
                 if any(x in c.lower() for x in candidates): return c
             return None
-
         col_id = get_col(["id", "編號"])
         col_name = get_col(["filename", "name", "檔名"])
         col_link = get_col(["link_source", "link", "連結"])
         col_voice = get_col(["voice", "category", "聲線"])
         col_main = get_col(["style", "主風格"])
         col_sec = get_col(["sec style", "副風格"])
-
+        
         rename_map = { col_name: 'Name', col_link: 'Link_Source', col_voice: 'Voice', col_main: 'Main_Style', col_sec: 'Sec_Style' }
         if col_id: rename_map[col_id] = 'ID'
-        
         df = df.rename(columns=rename_map)
         if 'ID' not in df.columns: df['ID'] = df['Name'].astype(str)
         df['Main_Style'] = df['Main_Style'].fillna("未分類")
         df['Sec_Style'] = df['Sec_Style'].fillna("")
         return df.dropna(subset=['Link_Source'])
     except: return pd.DataFrame()
-
-# === 5. 播放器渲染 (隱藏下載鈕) ===
-def render_player(b64_data):
-    # 使用 HTML5 屬性禁用下載按鈕
-    st.markdown(f"""
-        <div style="background:#f1f3f4; padding:10px; border-radius:10px; border:1px solid #ddd;">
-            <audio controls controlsList="nodownload" oncontextmenu="return false;" style="width:100%;">
-                <source src="{b64_data}" type="audio/mpeg">
-            </audio>
-        </div>
-    """, unsafe_allow_html=True)
 
 # === 6. 主程式 ===
 def main():
@@ -85,18 +105,17 @@ def main():
     df = load_data()
     if df.empty: return
 
-    # --- [模式 A] 外部分享 ---
+    # --- [模式 A] 外部分享 (客戶頁面) ---
     if target_id:
         target_row = df[df['ID'] == str(target_id)]
         if not target_row.empty:
             item = target_row.iloc[0]
             st.subheader(f"🎵 {item['Name']}")
-            with st.spinner("載入中..."):
-                b64_audio = get_audio_base64(item['Link_Source'])
-            if b64_audio: render_player(b64_audio)
-            else: st.error("音檔讀取失敗")
-            
-            st.divider()
+            with st.spinner("音檔載入中..."):
+                b64_data = get_audio_base64(item['Link_Source'])
+            if b64_data:
+                st.markdown(f'<audio controls controlsList="nodownload" style="width:100%;"><source src="{b64_data}" type="audio/mpeg"></audio>', unsafe_allow_html=True)
+            else: st.error("載入失敗")
             if st.button("🏠 回搜尋首頁"):
                 st.query_params.clear()
                 st.rerun()
@@ -107,13 +126,13 @@ def main():
     if "logged_in" not in st.session_state: st.session_state.logged_in = False
     if not st.session_state.logged_in:
         with st.form("login"):
-            pw = st.text_input("請輸入密碼", type="password")
-            if st.form_submit_button("登入") and pw == PASSWORD:
-                st.session_state.logged_in = True
-                st.rerun()
+            pw = st.text_input("Password", type="password")
+            if st.form_submit_button("登入", type="primary"):
+                if pw == PASSWORD: st.session_state.logged_in = True; st.rerun()
+                else: st.error("密碼錯誤")
         return
 
-    # 搜尋與篩選區 (找回主/副風格)
+    # 搜尋過濾 UI (包含您原本的男聲/女聲/遠距/主副風格)
     with st.container(border=True):
         search_name = st.text_input("👤 搜尋關鍵字")
         c1, c2, c3 = st.columns(3)
@@ -121,7 +140,6 @@ def main():
         with c2: filter_female = st.checkbox("🙋‍♀️ 女聲")
         with c3: filter_remote = st.checkbox("🏠 可遠距")
         
-        # 找回風格選單
         sel_c1, sel_c2 = st.columns(2)
         with sel_c1:
             main_opts = ["全部"] + sorted([x for x in df['Main_Style'].unique() if x != "未分類"])
@@ -146,16 +164,21 @@ def main():
 
     for _, row in results.head(20).iterrows():
         with st.expander(f"📄 {row['Name']}"):
+            # 只有點開時才載入播放器，節省效能
             if st.button(f"▶️ 載入播放器", key=f"p_{row['ID']}"):
                 b64_data = get_audio_base64(row['Link_Source'])
-                if b64_data: render_player(b64_data)
+                if b64_data:
+                    st.markdown(f'<audio controls controlsList="nodownload" style="width:100%;"><source src="{b64_data}" type="audio/mpeg"></audio>', unsafe_allow_html=True)
                 else: st.error("載入失敗")
-            
-            # 分享連結
-            if st.button("🌏 產生外部分享連結", key=f"s_{row['ID']}"):
-                share_url = f"{SITE_URL}?id={row['ID']}"
-                st.code(share_url, language=None)
-                st.success("請複製上方網址給客戶")
+
+            b1, b2 = st.columns(2)
+            with b1:
+                if st.button("📋 內部分享", key=f"in_{row['ID']}"):
+                    show_share_dialog("內部分享連結 (OneDrive)", row['Link_Source'])
+            with b2:
+                if st.button("🌏 外部分享", key=f"out_{row['ID']}"):
+                    share_link = f"{SITE_URL}?id={row['ID']}"
+                    show_share_dialog("外部分享連結 (客戶試聽用)", share_link)
 
 if __name__ == "__main__":
     main()
