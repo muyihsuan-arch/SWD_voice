@@ -3,18 +3,18 @@ import pandas as pd
 import streamlit.components.v1 as components
 import requests
 import base64
-import urllib.parse
+import time  # 用於判斷 30 分鐘時效
 
 # === 1. 設定區 ===
 CSV_URL = "https://docs.google.com/spreadsheets/d/e/2PACX-1vQWueqZqoUXP7YM_UDDAedhAjYQI80RoNapxH8YyKbyLkq8L_CprL2eeQ7DEPBqdxqJCRVCiaRp9l6S/pub?output=csv"
 PASSWORD = "888"
 SITE_URL = "https://swd-voice.streamlit.app"
+TIMEOUT_SECONDS = 1800  # 30 分鐘 = 1800 秒
 
 # === 2. 核心技術：Base64 抓取函數 (解決 Safari 轉址問題) ===
 @st.cache_data(ttl=600)
 def get_audio_base64(url):
     if not isinstance(url, str) or url == "": return None
-    # 針對 SharePoint 轉直連
     target_url = url.split('?')[0] + "?download=1" if "sharepoint.com" in url else url
     try:
         headers = {'User-Agent': 'Mozilla/5.0'}
@@ -25,7 +25,7 @@ def get_audio_base64(url):
     except: return None
     return None
 
-# === 3. 頁面與 CSS 設定 (維持您原本的 RWD 與播放器樣式) ===
+# === 3. 頁面與 CSS 設定 ===
 st.set_page_config(page_title="全家配音試聽", layout="centered")
 
 st.markdown("""
@@ -42,7 +42,7 @@ st.markdown("""
     </style>
 """, unsafe_allow_html=True)
 
-# === 4. 複製按鈕元件 (原本的漂亮的 Dialog 元件) ===
+# === 4. 複製按鈕與 Dialog 元件 ===
 def render_copy_ui(text_to_copy):
     html_code = f"""
     <div style="background-color: #f0f2f6; padding: 15px; border-radius: 10px;">
@@ -72,7 +72,7 @@ def show_share_dialog(title, link):
     st.caption(f"{title}")
     render_copy_ui(link)
 
-# === 5. 資料讀取 (完整的欄位對應邏輯) ===
+# === 5. 資料讀取 ===
 @st.cache_data(ttl=600)
 def load_data():
     try:
@@ -100,39 +100,64 @@ def load_data():
 
 # === 6. 主程式 ===
 def main():
+    # --- A. 初始化與自動登出邏輯 ---
+    if "logged_in" not in st.session_state:
+        st.session_state.logged_in = False
+    if "login_time" not in st.session_state:
+        st.session_state.login_time = 0
+
+    # 檢查登入是否超時
+    if st.session_state.logged_in:
+        elapsed_time = time.time() - st.session_state.login_time
+        if elapsed_time > TIMEOUT_SECONDS:
+            st.session_state.logged_in = False
+            st.warning("登入已超過 30 分鐘，為了安全已自動登出。")
+
     params = st.query_params
     target_id = params.get("id", None)
     df = load_data()
     if df.empty: return
 
-    # --- [模式 A] 外部分享 (客戶頁面) ---
+    # --- B. [模式 A] 外部分享頁面 (客戶看) ---
     if target_id:
         target_row = df[df['ID'] == str(target_id)]
         if not target_row.empty:
             item = target_row.iloc[0]
             st.subheader(f"🎵 {item['Name']}")
+            
             with st.spinner("音檔載入中..."):
                 b64_data = get_audio_base64(item['Link_Source'])
+            
             if b64_data:
                 st.markdown(f'<audio controls controlsList="nodownload" style="width:100%;"><source src="{b64_data}" type="audio/mpeg"></audio>', unsafe_allow_html=True)
             else: st.error("載入失敗")
+            
+            st.divider()
+            
+            # 回首頁按鈕：不手動清空登入狀態，只清空網址參數
             if st.button("🏠 回搜尋首頁"):
                 st.query_params.clear()
                 st.rerun()
             return
 
-    # --- [模式 B] 內部列表 ---
+    # --- C. [模式 B] 內部列表 ---
     st.title("全家配音資料庫 📂")
-    if "logged_in" not in st.session_state: st.session_state.logged_in = False
+    
+    # 登入檢查
     if not st.session_state.logged_in:
-        with st.form("login"):
-            pw = st.text_input("Password", type="password")
-            if st.form_submit_button("登入", type="primary"):
-                if pw == PASSWORD: st.session_state.logged_in = True; st.rerun()
-                else: st.error("密碼錯誤")
+        with st.form("login_form"):
+            st.write("請輸入密碼以進入資料庫")
+            pw = st.text_input("Password", type="password", label_visibility="collapsed")
+            if st.form_submit_button("登入", type="primary", use_container_width=True):
+                if pw == PASSWORD:
+                    st.session_state.logged_in = True
+                    st.session_state.login_time = time.time()  # 紀錄登入時間
+                    st.rerun()
+                else:
+                    st.error("密碼錯誤")
         return
 
-    # 搜尋過濾 UI (包含您原本的男聲/女聲/遠距/主副風格)
+    # --- D. 搜尋與篩選介面 ---
     with st.container(border=True):
         search_name = st.text_input("👤 搜尋關鍵字")
         c1, c2, c3 = st.columns(3)
@@ -162,9 +187,9 @@ def main():
     results = df[mask]
     st.caption(f"🎯 共找到 {len(results)} 筆資料")
 
+    # --- E. 列表顯示 ---
     for _, row in results.head(20).iterrows():
         with st.expander(f"📄 {row['Name']}"):
-            # 只有點開時才載入播放器，節省效能
             if st.button(f"▶️ 載入播放器", key=f"p_{row['ID']}"):
                 b64_data = get_audio_base64(row['Link_Source'])
                 if b64_data:
