@@ -8,7 +8,7 @@ CSV_URL = "https://docs.google.com/spreadsheets/d/e/2PACX-1vQWueqZqoUXP7YM_UDDAe
 PASSWORD = "888"
 SITE_URL = "https://swd-voice.streamlit.app"
 
-# === 2. 頁面與 CSS 設定 (維持 V12) ===
+# === 2. 頁面與 CSS 設定 (維持 V12/V18 架構) ===
 st.set_page_config(page_title="全家配音試聽", layout="centered")
 
 st.markdown("""
@@ -64,7 +64,7 @@ def show_share_dialog(title, link):
     st.caption(f"{title}")
     render_copy_ui(link)
 
-# === 4. 資料讀取 (微調：加入 ID) ===
+# === 4. 資料讀取 ===
 @st.cache_data(ttl=600)
 def load_data():
     try:
@@ -76,10 +76,11 @@ def load_data():
                 if any(x in c.lower() for x in candidates): return c
             return None
 
-        # 加入 ID 讀取
+        # 欄位對應
         col_id = get_col(["id", "編號"])
         col_name = get_col(["filename", "name", "檔名"])
         col_link = get_col(["link_source", "link", "連結"])
+        col_player = get_col(["link_player", "player", "播放連結"]) 
         col_voice = get_col(["voice", "category", "聲線"])
         col_main = get_col(["style", "主風格"])
         col_sec = get_col(["sec style", "副風格"])
@@ -88,37 +89,43 @@ def load_data():
 
         rename_map = { 
             col_name: 'Name', 
-            col_link: 'Link', 
+            col_link: 'Link_Source', 
             col_voice: 'Voice', 
             col_main: 'Main_Style' 
         }
-        if col_id: rename_map[col_id] = 'ID' # 存 ID
+        if col_id: rename_map[col_id] = 'ID'
+        if col_player: rename_map[col_player] = 'Link_Player'
         if col_sec: rename_map[col_sec] = 'Sec_Style'
         
         df = df.rename(columns=rename_map)
         
-        # 確保 ID 存在
         if 'ID' not in df.columns: df['ID'] = df['Name']
         else: df['ID'] = df['ID'].astype(str)
+
+        if 'Link_Player' not in df.columns: df['Link_Player'] = df['Link_Source']
+        df['Link_Player'] = df['Link_Player'].fillna(df['Link_Source'])
 
         if 'Sec_Style' not in df.columns: df['Sec_Style'] = ""
         df['Main_Style'] = df['Main_Style'].fillna("未分類")
         df['Sec_Style'] = df['Sec_Style'].fillna("")
         
-        return df.dropna(subset=['Link'])
+        return df.dropna(subset=['Link_Source'])
     except:
         return pd.DataFrame()
 
-# === 5. 連結處理 ===
+# === 5. 連結處理 (修正：完全不修改連結) ===
+
 def get_clean_link(link):
     if not isinstance(link, str): return ""
-    return link.replace('&download=1', '').replace('?download=1', '')
+    # 這裡只做最基本的字串轉型，不移除參數
+    return link
 
 def get_player_link(link):
-    clean = get_clean_link(link)
-    return clean + ('&download=1' if '?' in clean else '?download=1')
+    # 【關鍵修改】直接回傳原始連結，不做任何加工
+    # 不再添加 &download=1
+    return link
 
-# === 6. 手機紅按鈕 (內部用) ===
+# === 6. 手機紅按鈕元件 ===
 def render_mobile_btn(url):
     st.markdown(f"""
         <div class="mobile-only" style="margin-bottom: 10px;">
@@ -131,7 +138,7 @@ def render_mobile_btn(url):
                 ▶️ 手機點此播放音檔
             </a>
             <div style="text-align:center; color:#666; font-size:12px; margin-top:5px;">
-                (開啟新視窗播放，無法隱藏下載)
+                (開啟新視窗播放)
             </div>
         </div>
     """, unsafe_allow_html=True)
@@ -140,7 +147,7 @@ def render_mobile_btn(url):
 def main():
     params = st.query_params
     target_id = params.get("id", None)
-    target_name = params.get("n", None) # 相容舊連結
+    target_name = params.get("n", None)
     
     df = load_data()
     if df.empty: return
@@ -152,17 +159,17 @@ def main():
         
     if not target_row.empty:
         item = target_row.iloc[0]
-        clean_link = get_clean_link(item['Link'])
-        play_link = get_player_link(clean_link)
+        # 直接使用原始 Link_Player
+        play_source = get_player_link(item['Link_Player'])
         
         with st.container(border=True):
             st.subheader(f"🎵 {item['Name']}")
             
-            # 外部模式：PC 和 手機都顯示播放器 (禁下載)
-            # 加上 unique ID 確保運作
+            # 外部模式：PC 和 手機都顯示播放器 (無下載鈕)
+            # 因為 link 沒被修改，這裡完全依賴您 Excel 填入的網址
             st.markdown(f"""
                 <audio id="audio_ext_{item['ID']}" controls controlsList="nodownload" oncontextmenu="return false;" style="width: 100%;">
-                    <source src="{play_link}" type="audio/mp3">
+                    <source src="{play_source}" type="audio/mp3">
                 </audio>
             """, unsafe_allow_html=True)
             
@@ -195,7 +202,6 @@ def main():
 
         with st.container(border=True):
             search_name = st.text_input("👤 配音員名稱 / 關鍵字")
-            
             col_t1, col_t2, col_t3 = st.columns(3)
             with col_t1: filter_male = st.checkbox("🙋‍♂️ 男聲")
             with col_t2: filter_female = st.checkbox("🙋‍♀️ 女聲")
@@ -224,25 +230,26 @@ def main():
 
         for _, row in results.head(20).iterrows():
             with st.expander(f"📄 {row['Name']}"):
-                clean_link = get_clean_link(row['Link'])
-                play_link = get_player_link(clean_link)
                 
-                # 1. PC 播放器：加上 ID (修復重複播放問題)
+                player_src = get_player_link(row['Link_Player']) # 直取原始連結
+                source_src = get_clean_link(row['Link_Source'])  # 直取原始連結
+                
+                # 1. PC 播放器
                 st.markdown(f"""
                     <div class="pc-only">
                         <audio id="audio_{row['ID']}" controls controlsList="nodownload" oncontextmenu="return false;" style="width: 100%; margin-bottom: 10px;">
-                            <source src="{play_link}" type="audio/mp3">
+                            <source src="{player_src}" type="audio/mp3">
                         </audio>
                     </div>
                 """, unsafe_allow_html=True)
                 
-                # 2. 手機紅按鈕：維持不變 (內部用)
-                render_mobile_btn(clean_link)
+                # 2. 手機紅按鈕
+                render_mobile_btn(source_src)
                 
                 b1, b2 = st.columns(2)
                 with b1:
                     if st.button("📋 內部分享", key=f"in_{row['ID']}"):
-                        show_share_dialog("內部分享連結 (OneDrive)", clean_link)
+                        show_share_dialog("內部分享連結 (OneDrive)", source_src)
                 with b2:
                     if st.button("🌏 外部分享", key=f"out_{row['ID']}"):
                         share_link = f"{SITE_URL}?id={row['ID']}"
