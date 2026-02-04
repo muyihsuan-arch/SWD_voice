@@ -8,7 +8,7 @@ CSV_URL = "https://docs.google.com/spreadsheets/d/e/2PACX-1vQWueqZqoUXP7YM_UDDAe
 PASSWORD = "888"
 SITE_URL = "https://swd-voice.streamlit.app"
 
-# === 2. 頁面與 CSS 設定 (維持 V12/V18 架構) ===
+# === 2. 頁面與 CSS 設定 ===
 st.set_page_config(page_title="全家配音試聽", layout="centered")
 
 st.markdown("""
@@ -76,7 +76,6 @@ def load_data():
                 if any(x in c.lower() for x in candidates): return c
             return None
 
-        # 欄位對應
         col_id = get_col(["id", "編號"])
         col_name = get_col(["filename", "name", "檔名"])
         col_link = get_col(["link_source", "link", "連結"])
@@ -101,10 +100,8 @@ def load_data():
         
         if 'ID' not in df.columns: df['ID'] = df['Name']
         else: df['ID'] = df['ID'].astype(str)
-
         if 'Link_Player' not in df.columns: df['Link_Player'] = df['Link_Source']
         df['Link_Player'] = df['Link_Player'].fillna(df['Link_Source'])
-
         if 'Sec_Style' not in df.columns: df['Sec_Style'] = ""
         df['Main_Style'] = df['Main_Style'].fillna("未分類")
         df['Sec_Style'] = df['Sec_Style'].fillna("")
@@ -113,37 +110,39 @@ def load_data():
     except:
         return pd.DataFrame()
 
-# === 5. 連結處理 (修正：針對 Safari 優化 SharePoint 直連) ===
+# === 5. 連結處理 (核心：解決 Safari 轉址阻擋問題) ===
 
 def convert_sharepoint_url(url):
     """
-    關鍵函數：將 SharePoint 的預覽網址轉為『二進制流』網址。
-    這能解決 Safari 抓得嚴、轉址兩次導致播放器掛掉的問題。
+    將 SharePoint 分享網址轉換為 Safari 可直接播放的音檔流網址。
     """
     if not isinstance(url, str) or url == "":
         return ""
     
-    # 如果已經是轉過的或是外部連結則不處理
-    if "download=1" in url or "sharepoint.com" not in url:
-        return url
+    # 處理 SharePoint / OneDrive 內部連結
+    if "sharepoint.com" in url:
+        # 1. 移除既有參數，獲取基礎網址
+        base_url = url.split('?')[0]
+        
+        # 2. 強制轉換格式：將 :u: 或 :f: 轉換為 :b: (Binary) 模式在某些環境更穩定
+        # 如果無法確定，最通用的做法是加上 download=1 參數
+        if "/:u:/" in base_url:
+            direct_url = base_url.replace("/:u:/", "/:b:/")
+        else:
+            direct_url = base_url
+            
+        return f"{direct_url}?download=1"
     
-    # 處理公司內部的 SharePoint / OneDrive 網址
-    # 做法：移除所有參數，並強製加入 download=1 誘使伺服器直接吐出檔案流
-    base_url = url.split('?')[0]
-    return f"{base_url}?download=1"
+    return url
 
 def get_clean_link(link):
-    # 保持原始連結用於「內部分享」
+    """保持原始分享網址，用於內部分享複製"""
     if not isinstance(link, str): return ""
     return link
 
-def get_player_link(link):
-    # 【關鍵修改】將連結轉換為直連，確保 iPhone Safari 能夠直接抓到音檔流
-    return convert_sharepoint_url(link)
-
 # === 6. 手機紅按鈕元件 ===
 def render_mobile_btn(url):
-    # 同樣使用轉換後的網址，確保手機點開直接是音檔
+    # 手機紅按鈕同樣使用直連網址，確保開啟後直接播放
     direct_url = convert_sharepoint_url(url)
     st.markdown(f"""
         <div class="mobile-only" style="margin-bottom: 10px;">
@@ -156,7 +155,7 @@ def render_mobile_btn(url):
                 ▶️ 手機點此播放音檔
             </a>
             <div style="text-align:center; color:#666; font-size:12px; margin-top:5px;">
-                (解決 Safari 跳轉問題，直接開啟串流)
+                (解決 Safari 跳轉阻擋，直接開啟串流)
             </div>
         </div>
     """, unsafe_allow_html=True)
@@ -177,18 +176,20 @@ def main():
         
     if not target_row.empty:
         item = target_row.iloc[0]
-        # 直接使用原始 Link_Player
-        play_source = get_player_link(item['Link_Player'])
+        # 關鍵：轉換連結為直連流
+        play_source = convert_sharepoint_url(item['Link_Player'])
         
         with st.container(border=True):
             st.subheader(f"🎵 {item['Name']}")
             
-            # 外部模式：PC 和 手機都顯示播放器 (無下載鈕)
-            # 因為 link 沒被修改，這裡完全依賴您 Excel 填入的網址
+            # 外部模式：使用優化後的 HTML5 播放器，明確宣告 type
             st.markdown(f"""
-                <audio id="audio_ext_{item['ID']}" controls controlsList="nodownload" oncontextmenu="return false;" style="width: 100%;">
-                    <source src="{play_source}" type="audio/mp3">
-                </audio>
+                <div style="width: 100%; background: #f9f9f9; padding: 10px; border-radius: 10px; border: 1px solid #eee; margin-bottom: 15px;">
+                    <audio controls controlsList="nodownload" preload="auto" style="width: 100%;">
+                        <source src="{play_source}" type="audio/mpeg">
+                        您的瀏覽器不支援試聽，請聯繫專員。
+                    </audio>
+                </div>
             """, unsafe_allow_html=True)
             
             st.divider()
@@ -249,20 +250,21 @@ def main():
         for _, row in results.head(20).iterrows():
             with st.expander(f"📄 {row['Name']}"):
                 
-                player_src = get_player_link(row['Link_Source']) # 直取原始連結
-                source_src = get_clean_link(row['Link_Source'])  # 直取原始連結
+                # 獲取轉換後的播放連結
+                player_src = convert_sharepoint_url(row['Link_Player']) 
+                source_src = get_clean_link(row['Link_Source'])
                 
-                # 1. PC 播放器
+                # 1. PC 播放器 (也優化為可支援手機 Safari 的 HTML)
                 st.markdown(f"""
-                    <div class="pc-only">
-                        <audio id="audio_{row['ID']}" controls controlsList="nodownload" oncontextmenu="return false;" style="width: 100%; margin-bottom: 10px;">
-                            <source src="{player_src}" type="audio/mp3">
+                    <div style="margin-bottom: 15px;">
+                        <audio controls controlsList="nodownload" preload="auto" style="width: 100%;">
+                            <source src="{player_src}" type="audio/mpeg">
                         </audio>
                     </div>
                 """, unsafe_allow_html=True)
                 
                 # 2. 手機紅按鈕
-                render_mobile_btn(source_src)
+                render_mobile_btn(row['Link_Source'])
                 
                 b1, b2 = st.columns(2)
                 with b1:
