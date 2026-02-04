@@ -113,23 +113,41 @@ def load_data():
     except:
         return pd.DataFrame()
 
-# === 5. 連結處理 (修正：完全不修改連結) ===
+# === 5. 連結處理 (修正：針對 Safari 優化 SharePoint 直連) ===
+
+def convert_sharepoint_url(url):
+    """
+    關鍵函數：將 SharePoint 的預覽網址轉為『二進制流』網址。
+    這能解決 Safari 抓得嚴、轉址兩次導致播放器掛掉的問題。
+    """
+    if not isinstance(url, str) or url == "":
+        return ""
+    
+    # 如果已經是轉過的或是外部連結則不處理
+    if "download=1" in url or "sharepoint.com" not in url:
+        return url
+    
+    # 處理公司內部的 SharePoint / OneDrive 網址
+    # 做法：移除所有參數，並強製加入 download=1 誘使伺服器直接吐出檔案流
+    base_url = url.split('?')[0]
+    return f"{base_url}?download=1"
 
 def get_clean_link(link):
+    # 保持原始連結用於「內部分享」
     if not isinstance(link, str): return ""
-    # 這裡只做最基本的字串轉型，不移除參數
     return link
 
 def get_player_link(link):
-    # 【關鍵修改】直接回傳原始連結，不做任何加工
-    # 不再添加 &download=1
-    return link
+    # 【關鍵修改】將連結轉換為直連，確保 iPhone Safari 能夠直接抓到音檔流
+    return convert_sharepoint_url(link)
 
 # === 6. 手機紅按鈕元件 ===
 def render_mobile_btn(url):
+    # 同樣使用轉換後的網址，確保手機點開直接是音檔
+    direct_url = convert_sharepoint_url(url)
     st.markdown(f"""
         <div class="mobile-only" style="margin-bottom: 10px;">
-            <a href="{url}" target="_blank" style="
+            <a href="{direct_url}" target="_blank" style="
                 display: block; width: 100%; padding: 15px; 
                 background-color: #FF4B4B; color: white; 
                 text-align: center; text-decoration: none; 
@@ -138,7 +156,7 @@ def render_mobile_btn(url):
                 ▶️ 手機點此播放音檔
             </a>
             <div style="text-align:center; color:#666; font-size:12px; margin-top:5px;">
-                (開啟新視窗播放)
+                (解決 Safari 跳轉問題，直接開啟串流)
             </div>
         </div>
     """, unsafe_allow_html=True)
