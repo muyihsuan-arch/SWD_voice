@@ -141,7 +141,7 @@ def main():
             return
 
     # --- C. [模式 B] 內部列表 ---
-    st.title("全家配音資料庫 📂")
+    st.title("全家配音員資料庫 📂")
     
     # 登入檢查
     if not st.session_state.logged_in:
