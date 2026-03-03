@@ -123,19 +123,24 @@ def main():
         target_row = df[df['ID'] == str(target_id)]
         if not target_row.empty:
             item = target_row.iloc[0]
-            st.subheader(f"🎵 {item['Name']}")
+            # 調整標題格式以符合參考圖
+            st.subheader(f"🎵 作品預覽 : {item['Name']}")
             
             with st.spinner("音檔載入中..."):
                 b64_data = get_audio_base64(item['Link_Source'])
             
             if b64_data:
+                # 插入警示語語塊
+                st.warning("⚠️ 此連結未經授權請勿分享或錄製，如有違規可能涉及法律裁罰，請務必遵守。")
+                
+                # 播放器
                 st.markdown(f'<audio controls controlsList="nodownload" style="width:100%;"><source src="{b64_data}" type="audio/mpeg"></audio>', unsafe_allow_html=True)
             else: st.error("載入失敗")
             
             st.divider()
             
-            # 回首頁按鈕：不手動清空登入狀態，只清空網址參數
-            if st.button("🏠 回搜尋首頁"):
+            # 回首頁按鈕：調整文字以符合參考圖
+            if st.button("🏠 回到首頁"):
                 st.query_params.clear()
                 st.rerun()
             return
@@ -170,40 +175,4 @@ def main():
             main_opts = ["全部"] + sorted([x for x in df['Main_Style'].unique() if x != "未分類"])
             sel_main = st.selectbox("📂 主風格", main_opts)
         with sel_c2:
-            if sel_main == "全部": sec_df = df
-            else: sec_df = df[df['Main_Style'] == sel_main]
-            sec_opts = ["全部"] + sorted([x for x in sec_df['Sec_Style'].unique() if x != ""])
-            sel_sec = st.selectbox("🏷️ 副風格", sec_opts)
-
-    # 過濾邏輯
-    mask = pd.Series([True] * len(df))
-    if search_name: mask &= df['Name'].str.contains(search_name, case=False, na=False)
-    if filter_male and not filter_female: mask &= df['Voice'].str.contains("男", na=False)
-    elif filter_female and not filter_male: mask &= df['Voice'].str.contains("女", na=False)
-    if filter_remote: mask &= df['Name'].str.contains("遠距", na=False)
-    if sel_main != "全部": mask &= (df['Main_Style'] == sel_main)
-    if sel_sec != "全部": mask &= (df['Sec_Style'] == sel_sec)
-    
-    results = df[mask]
-    st.caption(f"🎯 共找到 {len(results)} 筆資料")
-
-    # --- E. 列表顯示 ---
-    for _, row in results.head(20).iterrows():
-        with st.expander(f"📄 {row['Name']}"):
-            if st.button(f"▶️ 載入播放器", key=f"p_{row['ID']}"):
-                b64_data = get_audio_base64(row['Link_Source'])
-                if b64_data:
-                    st.markdown(f'<audio controls controlsList="nodownload" style="width:100%;"><source src="{b64_data}" type="audio/mpeg"></audio>', unsafe_allow_html=True)
-                else: st.error("載入失敗")
-
-            b1, b2 = st.columns(2)
-            with b1:
-                if st.button("📋 內部分享", key=f"in_{row['ID']}"):
-                    show_share_dialog("內部分享連結 (OneDrive)", row['Link_Source'])
-            with b2:
-                if st.button("🌏 外部分享", key=f"out_{row['ID']}"):
-                    share_link = f"{SITE_URL}?id={row['ID']}"
-                    show_share_dialog("外部分享連結 (客戶試聽用)", share_link)
-
-if __name__ == "__main__":
-    main()
+            if sel_main == "
